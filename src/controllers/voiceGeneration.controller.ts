@@ -1,8 +1,7 @@
 import { RequestHandler } from "express";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { controllerHandler } from "../utils/controllerHandler";
-import config from '../config/db/index';
-
+import config from "../config/db/index";
 
 const ai = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY as string });
 
@@ -11,7 +10,12 @@ function decode(base64: string): Uint8Array {
   return new Uint8Array(binary);
 }
 
-function pcmToWav(pcmData: Uint8Array, sampleRate: number, numChannels: number, bitsPerSample: number): Buffer {
+function pcmToWav(
+  pcmData: Uint8Array,
+  sampleRate: number,
+  numChannels: number,
+  bitsPerSample: number
+): Buffer {
   const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
   const blockAlign = numChannels * (bitsPerSample / 8);
   const dataSize = pcmData.length;
@@ -43,7 +47,7 @@ function pcmToWav(pcmData: Uint8Array, sampleRate: number, numChannels: number, 
   // fmt chunk
   writeString("fmt ");
   writeUInt32LE(16);
-  writeUInt16LE(1); // PCM
+  writeUInt16LE(1); // PCM format
   writeUInt16LE(numChannels);
   writeUInt32LE(sampleRate);
   writeUInt32LE(byteRate);
@@ -58,19 +62,23 @@ function pcmToWav(pcmData: Uint8Array, sampleRate: number, numChannels: number, 
   return buffer;
 }
 
-export const generateVoice = controllerHandler(
-  async (req) => {
-    console.log("in backend")
+// ✅ Fixed version — sends binary WAV directly as response
+export const generateVoice: RequestHandler = async (req, res) => {
+  try {
+    console.log("🔊 Received TTS request from frontend");
     const { text, voice, speed, pitch } = req.body;
 
     if (!text) {
-      throw new Error("Text is required");
+      res.status(400).json({ error: "Text is required" });
+      return;
     }
 
     const SAMPLE_RATE = 24000;
 
     const promptModifiers = [speed?.value, pitch?.value].filter(Boolean).join(", ");
-    const finalPrompt = `${voice?.promptPrefix || ""}${promptModifiers ? `Say ${promptModifiers}: ` : ""}"${text}"`;
+    const finalPrompt = `${voice?.promptPrefix || ""}${
+      promptModifiers ? `Say ${promptModifiers}: ` : ""
+    }"${text}"`;
 
     const result = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
@@ -87,7 +95,9 @@ export const generateVoice = controllerHandler(
       },
     });
 
-    const base64Audio = result.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    const base64Audio =
+      result.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
     if (!base64Audio) {
       throw new Error("No audio data returned from Gemini API");
     }
@@ -95,15 +105,15 @@ export const generateVoice = controllerHandler(
     const pcmData = decode(base64Audio);
     const wavBuffer = pcmToWav(pcmData, SAMPLE_RATE, 1, 16);
 
-    return {
-      headers: {
-        "Content-Type": "audio/wav",
-      },
-      data: wavBuffer,
-    };
-  },
-  {
-    statusCode: 200,
-    message: "Voice generated successfully",
+    // ✅ Send audio properly as WAV
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Content-Disposition", 'attachment; filename="output.wav"');
+    res.send(wavBuffer);
+  } catch (error: any) {
+    console.error("❌ Error generating voice:", error);
+    res.status(500).json({
+      error: "Failed to generate voice",
+      details: error.message || error,
+    });
   }
-);
+};
