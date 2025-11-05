@@ -49,7 +49,7 @@ app.get("/health", (req: Request, res: Response) => {
 });
 
 app.get("/favicon.ico", (req: Request, res: Response) => res.status(204).end());
-app.use("/api/v1", routes);
+app.use("/v1", routes);
 
 // Global Error Handler
 app.use(errorHandler);

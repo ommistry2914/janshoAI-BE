@@ -5,8 +5,8 @@ import logger from "./utils/logger";
 
 const startServer = async () => {
   try {
-    await mongoose.connect(config.database_url as string);
-    logger.info("Connected to MongoDB");
+    // await mongoose.connect(config.database_url as string);
+    // logger.info("Connected to MongoDB");
 
     app.listen(config.port, () => {
       logger.info(`Server running at http://localhost:${config.port}`);

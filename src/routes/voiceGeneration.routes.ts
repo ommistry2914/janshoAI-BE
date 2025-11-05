@@ -3,6 +3,6 @@ import { generateVoice } from "../controllers/voiceGeneration.controller";
 
 const router = Router();
 
-router.get("/",generateVoice);
+router.post("/generateVoice",generateVoice);
 
 export default router;

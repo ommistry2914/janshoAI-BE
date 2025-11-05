@@ -9,4 +9,5 @@ export default {
   node_env: process.env.NODE_ENV || 'development',
   ACCESS_SECRET: process.env.ACCESS_SECRET,
   REFRESH_TOKEN_SECRET: process.env.REFRESH_TOKEN_SECRET,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
 };
