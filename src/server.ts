@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
-import app from './src/app';
-import config from './src/config/db';
-import logger from "./src/utils/logger";
+import app from './app';
+import config from './config/db';
+import logger from "./utils/logger";
 
 const startServer = async () => {
   try {
