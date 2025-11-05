@@ -8,12 +8,13 @@ const startServer = async () => {
     // await mongoose.connect(config.database_url as string);
     // logger.info("Connected to MongoDB");
 
-    app.listen(config.port, () => {
-      logger.info(`Server running at http://localhost:${config.port}`);
-    });
+    // app.listen(config.port, () => {
+    //   logger.info(`Server running at http://localhost:${config.port}`);
+    // });
   } catch (err) {
     logger.error("Failed to connect to MongoDB: " + err);
   }
 };
 
 startServer();
+export default app;
