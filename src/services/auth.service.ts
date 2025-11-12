@@ -10,9 +10,10 @@ import {
 
 export const AuthService = {
   async register(req: Request) {
-    const { name, email, password } = req.body;
+    console.log("req.body", req.body);
+    const { firstName,lastName, email, password } = req.body;
 
-    if (!name || !email || !password)
+    if (!firstName || !lastName || !email || !password)
       throw new ApiError(400, "Name, email, and password are required");
 
     const existing = await UserModel.findOne({ email });
@@ -21,7 +22,8 @@ export const AuthService = {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await UserModel.create({
-      name,
+      firstName,
+      lastName,
       email,
       password: hashedPassword,
     });
@@ -34,8 +36,10 @@ export const AuthService = {
 
     const safeUser = {
       id: user._id,
-      name: user.name,
+      firstName: user.firstName,
+      lastName: user.lastName,
       email: user.email,
+      role: user.role,
     };
 
     return { user: safeUser, accessToken, refreshToken };
@@ -61,8 +65,10 @@ export const AuthService = {
 
     const safeUser = {
       id: user._id,
-      name: user.name,
+      firstName: user.firstName,
+      lastName: user.lastName,
       email: user.email,
+      role: user.role,
     };
 
     return { user: safeUser, accessToken, refreshToken };

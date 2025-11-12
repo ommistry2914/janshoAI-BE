@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import app from "./app";
 import config from "./config/db";
 import logger from "./utils/logger";
+import initialUserCreation from "./utils/initialUserCreation";
 
 /**
  * When running on Vercel (serverless), we simply export the app.
@@ -18,6 +19,8 @@ if (!process.env.VERCEL) {
       app.listen(config.port, () => {
         logger.info(`🚀 Server running at http://localhost:${config.port}`);
       });
+
+      await initialUserCreation();
     } catch (err) {
       logger.error("❌ Failed to connect to MongoDB: " + err);
     }
