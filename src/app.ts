@@ -13,36 +13,30 @@ import { connectDB } from "./config/db/connect";
 
 const app: Application = express();
 
-// Security headers with cross-origin support
+// Security headers with cross-origin resource support
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
 
-// Allowed origins for CORS (production, vercel subdomains, and local dev)
-const allowedOrigins = [
-  "https://janshoai.vercel.app",
-  "https://jansho-ai-be.vercel.app",
-  "http://localhost:5173",
-  "http://localhost:3000",
-  "http://localhost:5000",
-  config.CLIENT_URL?.replace(/\/$/, ""),
-].filter(Boolean) as string[];
-
+// CORS configuration — supporting local, vercel preview, and production domains
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
     // Allow non-browser requests or missing origin (e.g. mobile, curl, server-to-server)
     if (!origin) return callback(null, true);
 
-    const cleanOrigin = origin.replace(/\/$/, "");
+    const clean = origin.replace(/\/$/, "");
     if (
-      allowedOrigins.includes(cleanOrigin) ||
-      cleanOrigin.endsWith(".vercel.app") // Automatically allows all preview & production Vercel domains
+      clean === "https://janshoai.vercel.app" ||
+      clean === "https://jansho-ai-be.vercel.app" ||
+      clean.endsWith(".vercel.app") ||
+      clean.includes("localhost") ||
+      clean.includes("127.0.0.1")
     ) {
       return callback(null, true);
     }
-    // Permissive fallback so client preflights never get hard-blocked by CORS
+    // Permissive fallback so requests are never hard-blocked by CORS
     return callback(null, true);
   },
   credentials: true,
@@ -59,23 +53,13 @@ const corsOptions: cors.CorsOptions = {
 };
 
 app.use(cors(corsOptions));
-// Handle preflight across all routes
+// Handle preflight OPTIONS requests across all routes
 app.options("*", cors(corsOptions));
 
 // Cookie parser — must precede route handlers
 app.use(cookieParser());
 
-// Serverless DB Connection Middleware: Ensures MongoDB is active before handling requests
-app.use(async (_req: Request, _res: Response, next: NextFunction) => {
-  try {
-    await connectDB();
-    next();
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.use(rateLimiter);
+// Logging
 app.use(
   morgan(":method :url :status - :response-time ms", {
     stream: {
@@ -83,11 +67,12 @@ app.use(
     },
   })
 );
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// ── Public Health & Diagnostic Endpoints (never require MongoDB connection) ──
 app.get("/", (_req: Request, res: Response) => {
-  logger.info("Root endpoint was called 🌐");
   res.json({
     status: "ok",
     message: "JanshoAI Backend API is up and running!",
@@ -103,17 +88,32 @@ app.get("/health", (_req: Request, res: Response) => {
     2: "connecting",
     3: "disconnecting",
   };
-  logger.info("Health check endpoint was called !!!");
   res.status(200).json({
     status: "ok",
     server: "running",
     database: states[dbState] || "unknown",
+    hasDatabaseUrl: Boolean(config.database_url),
     timestamp: new Date().toISOString(),
   });
 });
 
 app.get("/favicon.ico", (_req: Request, res: Response) => res.status(204).end());
-app.use("/v1", routes);
+
+// ── Protected API Routes (ensure MongoDB is connected before running) ──
+app.use(rateLimiter);
+
+app.use(
+  "/v1",
+  async (_req: Request, _res: Response, next: NextFunction) => {
+    try {
+      await connectDB();
+      next();
+    } catch (err) {
+      next(err);
+    }
+  },
+  routes
+);
 
 // Global Error Handler
 app.use(errorHandler);
