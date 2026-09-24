@@ -53,8 +53,6 @@ const corsOptions: cors.CorsOptions = {
 };
 
 app.use(cors(corsOptions));
-// Handle preflight OPTIONS requests across all routes
-app.options("*", cors(corsOptions));
 
 // Cookie parser — must precede route handlers
 app.use(cookieParser());
