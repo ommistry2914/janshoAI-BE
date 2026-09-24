@@ -1,4 +1,4 @@
-import { Request } from "express";
+import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import { ApiError } from "../utils/ApiError";
 import { UserModel } from "../models/user.model";
@@ -6,20 +6,44 @@ import {
   generateAccessToken,
   generateRefreshToken,
   verifyRefreshToken,
+  REFRESH_COOKIE_MAX_AGE_MS,
 } from "../utils/jwt";
+import config from "../config/db";
+
+/** Cookie options for the HttpOnly refresh token cookie */
+const REFRESH_COOKIE_OPTIONS = {
+  httpOnly: true,                                                         // Not accessible via JS
+  secure: config.node_env === "production",                              // HTTPS-only in prod
+  sameSite: config.node_env === "production" ? ("none" as const) : ("lax" as const), // Lax for local dev, none for cross-site prod
+  maxAge: REFRESH_COOKIE_MAX_AGE_MS,
+  path: "/",
+};
+
+/** Strips the password and refreshToken fields before sending user data */
+const sanitizeUser = (user: InstanceType<typeof UserModel>) => ({
+  id: user._id,
+  firstName: user.firstName,
+  lastName: user.lastName,
+  email: user.email,
+  role: user.role,
+});
 
 export const AuthService = {
-  async register(req: Request) {
-    console.log("req.body", req.body);
-    const { firstName,lastName, email, password } = req.body;
+  /**
+   * Register a new user.
+   * Returns: { user, accessToken }
+   * Sets: refresh token as HttpOnly cookie
+   */
+  async register(req: Request, res: Response) {
+    const { firstName, lastName, email, password } = req.body;
 
     if (!firstName || !lastName || !email || !password)
-      throw new ApiError(400, "Name, email, and password are required");
+      throw new ApiError(400, "First name, last name, email, and password are required");
 
     const existing = await UserModel.findOne({ email });
-    if (existing) throw new ApiError(400, "User already exists");
+    if (existing) throw new ApiError(409, "An account with this email already exists");
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, 12);
 
     const user = await UserModel.create({
       firstName,
@@ -28,93 +52,121 @@ export const AuthService = {
       password: hashedPassword,
     });
 
-    const accessToken = generateAccessToken({ id: user._id, email });
-    const refreshToken = generateRefreshToken({ id: user._id, email });
+    const accessToken = generateAccessToken({ id: user._id, email, role: user.role });
+    const refreshToken = generateRefreshToken({ id: user._id, email, role: user.role });
 
     user.refreshToken = refreshToken;
     await user.save();
 
-    const safeUser = {
-      id: user._id,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      role: user.role,
-    };
+    // Set refresh token as a secure HttpOnly cookie
+    res.cookie("refreshToken", refreshToken, REFRESH_COOKIE_OPTIONS);
 
-    return { user: safeUser, accessToken, refreshToken };
+    return { user: sanitizeUser(user), accessToken };
   },
 
-  async login(req: Request) {
+  /**
+   * Login an existing user.
+   * Returns: { user, accessToken }
+   * Sets: refresh token as HttpOnly cookie
+   */
+  async login(req: Request, res: Response) {
     const { email, password } = req.body;
 
     if (!email || !password)
       throw new ApiError(400, "Email and password are required");
 
-    const user = await UserModel.findOne({ email });
+    // Use select("+password") to explicitly include the hashed password field
+    const user = await UserModel.findOne({ email }).select("+password");
     if (!user) throw new ApiError(401, "Invalid email or password");
 
-    const valid = await bcrypt.compare(password, user.password);
-    if (!valid) throw new ApiError(401, "Invalid email or password");
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) throw new ApiError(401, "Invalid email or password");
 
-    const accessToken = generateAccessToken({ id: user._id, email });
-    const refreshToken = generateRefreshToken({ id: user._id, email });
+    const accessToken = generateAccessToken({ id: user._id, email, role: user.role });
+    const refreshToken = generateRefreshToken({ id: user._id, email, role: user.role });
 
     user.refreshToken = refreshToken;
     await user.save();
 
-    const safeUser = {
-      id: user._id,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      role: user.role,
-    };
+    res.cookie("refreshToken", refreshToken, REFRESH_COOKIE_OPTIONS);
 
-    return { user: safeUser, accessToken, refreshToken };
+    return { user: sanitizeUser(user), accessToken };
   },
 
-  async refreshToken(req: Request) {
-    const { refreshToken } = req.body;
-    if (!refreshToken) throw new ApiError(400, "Refresh token required");
+  /**
+   * Refresh the access token using the HttpOnly refresh token cookie.
+   * Returns: { accessToken }
+   * Rotates: the refresh token cookie (refresh token rotation)
+   */
+  async refreshToken(req: Request, res: Response) {
+    const token = req.cookies?.refreshToken as string | undefined;
+    if (!token) throw new ApiError(401, "No refresh token. Please log in again.");
 
-    const user = await UserModel.findOne({ refreshToken });
-    if (!user) throw new ApiError(401, "Invalid refresh token");
+    // Find user by stored refresh token (ties token to exact user record)
+    const user = await UserModel.findOne({ refreshToken: token });
+    if (!user) {
+      // Possible token reuse — clear the cookie defensively
+      res.clearCookie("refreshToken", REFRESH_COOKIE_OPTIONS);
+      throw new ApiError(401, "Invalid refresh token. Please log in again.");
+    }
 
     try {
-      const decoded = verifyRefreshToken(refreshToken) as {
-        id: string;
-        email: string;
-      };
+      const decoded = verifyRefreshToken(token) as { id: string; email: string; role: string };
 
+      // Token rotation: issue new pair on every refresh
       const newAccessToken = generateAccessToken({
         id: decoded.id,
         email: decoded.email,
+        role: decoded.role,
       });
       const newRefreshToken = generateRefreshToken({
         id: decoded.id,
         email: decoded.email,
+        role: decoded.role,
       });
 
       user.refreshToken = newRefreshToken;
       await user.save();
 
-      return { accessToken: newAccessToken, refreshToken: newRefreshToken };
+      res.cookie("refreshToken", newRefreshToken, REFRESH_COOKIE_OPTIONS);
+
+      return {
+        user: sanitizeUser(user),
+        accessToken: newAccessToken,
+      };
     } catch {
-      throw new ApiError(401, "Invalid or expired refresh token");
+      // Token is expired or tampered — clear it
+      res.clearCookie("refreshToken", REFRESH_COOKIE_OPTIONS);
+      throw new ApiError(401, "Refresh token expired. Please log in again.");
     }
   },
 
-  async logout(req: Request) {
-    const { refreshToken } = req.body;
-    if (!refreshToken) throw new ApiError(400, "Refresh token required");
+  /**
+   * Logout: clears the refresh token from DB and cookie.
+   */
+  async logout(req: Request, res: Response) {
+    const token = req.cookies?.refreshToken as string | undefined;
 
-    const user = await UserModel.findOne({ refreshToken });
-    if (!user) throw new ApiError(400, "Invalid token");
+    if (token) {
+      // Invalidate the refresh token in the database
+      await UserModel.findOneAndUpdate(
+        { refreshToken: token },
+        { $unset: { refreshToken: "" } }
+      );
+    }
 
-    user.refreshToken = undefined;
-    await user.save();
+    res.clearCookie("refreshToken", REFRESH_COOKIE_OPTIONS);
+    return {};
+  },
 
-    return { message: "Logged out successfully" };
+  /**
+   * Returns the currently authenticated user's profile.
+   * Requires authenticate middleware.
+   */
+  async getMe(req: Request) {
+    const { id } = (req as any).user;
+    const user = await UserModel.findById(id);
+    if (!user) throw new ApiError(404, "User not found");
+    return { user: sanitizeUser(user) };
   },
 };

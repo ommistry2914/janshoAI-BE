@@ -1,39 +1,43 @@
 import { UserModel } from "../models/user.model";
 import logger from "./logger";
 import bcrypt from "bcryptjs";
+import config from "../config/db";
 
-const initialUserCreation = async () => {
+/**
+ * Seeds the initial super admin account on first server boot.
+ * All credentials are loaded exclusively from environment variables —
+ * nothing is hardcoded in source code.
+ */
+const initialUserCreation = async (): Promise<void> => {
   try {
-    const superAdminEmail = "janu@gmail.com";
-    const superAdminPassword = "Password@1";
-    const superAdminFirstName = "Super";
-    const superAdminLastName = "Admin";
-    const superAdminRole = "superAdmin";
+    const {
+      SUPER_ADMIN_EMAIL,
+      SUPER_ADMIN_PASSWORD,
+      SUPER_ADMIN_FIRST_NAME,
+      SUPER_ADMIN_LAST_NAME,
+    } = config;
 
     // Check if super admin already exists
-    const existingAdmin = await UserModel.findOne({ email: superAdminEmail });
-
+    const existingAdmin = await UserModel.findOne({ email: SUPER_ADMIN_EMAIL });
     if (existingAdmin) {
       logger.info("Super Admin already exists. Skipping creation.");
       return;
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(superAdminPassword, 10);
+    const hashedPassword = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 12);
 
-    // Create new super admin
-    const newAdmin = new UserModel({
-      firstName: superAdminFirstName,
-      lastName: superAdminLastName,
-      email: superAdminEmail,
+    await UserModel.create({
+      firstName: SUPER_ADMIN_FIRST_NAME,
+      lastName: SUPER_ADMIN_LAST_NAME,
+      email: SUPER_ADMIN_EMAIL,
       password: hashedPassword,
-      role: superAdminRole,
+      role: "superAdmin",
     });
 
-    await newAdmin.save();
-    logger.info("Super Admin account created successfully!");
+    logger.info("✅ Super Admin account created successfully!");
   } catch (err) {
-    logger.error("Failed to create Super Admin: " + err);
+    logger.error("❌ Failed to create Super Admin: " + err);
   }
 };
+
 export default initialUserCreation;
