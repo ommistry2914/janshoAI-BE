@@ -10,11 +10,13 @@ import {
 } from "../utils/jwt";
 import config from "../config/db";
 
+const isProdEnv = config.node_env === "production" || Boolean(process.env.VERCEL);
+
 /** Cookie options for the HttpOnly refresh token cookie */
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,                                                         // Not accessible via JS
-  secure: config.node_env === "production",                              // HTTPS-only in prod
-  sameSite: config.node_env === "production" ? ("none" as const) : ("lax" as const), // Lax for local dev, none for cross-site prod
+  secure: isProdEnv,                                                      // HTTPS-only in prod / Vercel
+  sameSite: isProdEnv ? ("none" as const) : ("lax" as const),            // "none" is REQUIRED for cross-site cookies between vercel subdomains
   maxAge: REFRESH_COOKIE_MAX_AGE_MS,
   path: "/",
 };
